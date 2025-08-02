@@ -1,0 +1,41 @@
+CREATE TABLE securities (
+    id SERIAL PRIMARY KEY,                    -- Unique internal ID for each stock
+    ticker VARCHAR(20) UNIQUE NOT NULL,       -- The symbol used by yfinance (e.g., 'RELIANCE.NS')
+    long_name VARCHAR(255),                   -- Full company name
+    sector VARCHAR(100),                      -- Industry sector
+    industry VARCHAR(100),                    -- Specific industry
+    exchange VARCHAR(10),                     -- Exchange code
+    currency VARCHAR(5),                      -- Currency of the stock
+    business_summary TEXT,                    -- A detailed description of the company's operations
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Add indexes for faster lookups
+CREATE INDEX idx_securities_sector ON securities(sector);
+CREATE INDEX idx_securities_industry ON securities(industry);
+
+CREATE TABLE daily_prices (
+    security_id INT NOT NULL,                 -- Foreign key referencing the 'securities' table
+    trade_date DATE NOT NULL,                 -- The specific date for this data entry
+
+    -- Core Historical Price & Volume Data
+    open_price NUMERIC(19, 4),                -- Opening price
+    high_price NUMERIC(19, 4),                -- Highest price of the day
+    low_price NUMERIC(19, 4),                 -- Lowest price of the day
+    close_price NUMERIC(19, 4),               -- Closing price
+    adj_close_price NUMERIC(19, 4),           -- Closing price adjusted for splits and dividends
+    volume BIGINT,                            -- Number of shares traded
+    market_cap BIGINT,                        -- **NEW**: Calculated historical market capitalization
+
+    -- Corporate Actions
+    dividends NUMERIC(19, 4) DEFAULT 0,       -- Dividend amount paid on this day
+    stock_splits NUMERIC(10, 4) DEFAULT 0,    -- Stock split ratio on this day
+
+    -- Constraints
+    PRIMARY KEY (security_id, trade_date),    -- Ensures one record per stock per day
+    FOREIGN KEY (security_id) REFERENCES securities(id) ON DELETE CASCADE
+);
+
+-- Add an index for quickly querying data for a specific date
+CREATE INDEX idx_daily_prices_trade_date ON daily_prices(trade_date);

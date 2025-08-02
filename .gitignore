@@ -1,0 +1,24 @@
+# Byte-compiled / optimized / C files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+/venv/
+/.venv/
+/env/
+/.env/
+
+# IDE and editor directories
+.vscode/
+.idea/
+
+# Secret files
+# Add any files with credentials, API keys, or secrets
+*.env
+credentials.json
+
+# OS-generated files
+.DS_Store
+Thumbs.db
