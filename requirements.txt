@@ -9,3 +9,5 @@ lxml
 ollama
 fastapi
 uvicorn[standard]
+apscheduler
+SQLAlchemy

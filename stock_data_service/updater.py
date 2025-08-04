@@ -3,7 +3,7 @@ import time
 from tqdm import tqdm
 from datetime import date
 
-from .database import DatabaseManager
+from database import DatabaseManager
 from .fetcher import StockDataFetcher
 from . import config # Initializes logging
 
@@ -18,6 +18,10 @@ def run_daily_stock_update():
     logging.info("🚀 Starting daily stock price update process...")
     
     db_manager = None
+    # Initialize summary variables before the try block to prevent UnboundLocalError
+    total_records_inserted = 0
+    tickers_failed = 0
+    
     try:
         db_manager = DatabaseManager()
         fetcher = StockDataFetcher()
@@ -30,9 +34,6 @@ def run_daily_stock_update():
 
         logging.info(f"Found {len(tickers)} tickers to check for updates.")
         
-        total_records_inserted = 0
-        tickers_failed = 0
-
         # 2. Loop through each ticker, check for the last date, fetch, and update
         for ticker in tqdm(tickers, desc="Updating Stocks"):
             try:

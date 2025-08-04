@@ -4,12 +4,14 @@ from psycopg2.extras import DictCursor
 from contextlib import contextmanager
 import logging
 from datetime import date
+from typing import Dict, Any
 
-from . import config
+import config
 
 class DatabaseManager:
     """
     A production-ready class to manage PostgreSQL connections and operations.
+    This is a shared service used by all other data services.
     It uses a connection pool for efficiency.
     """
     def __init__(self):
@@ -69,10 +71,6 @@ class DatabaseManager:
             with conn.cursor() as cursor:
                 cursor.execute(query, (ticker_symbol,))
                 latest_date = cursor.fetchone()[0]
-                if latest_date:
-                    logging.debug(f"Latest date for {ticker_symbol} in DB is {latest_date}.")
-                else:
-                    logging.debug(f"No existing data found for {ticker_symbol} in DB.")
                 return latest_date
 
     def upsert_daily_price(self, ticker: str, price_data: dict):
@@ -104,3 +102,24 @@ class DatabaseManager:
             with conn.cursor() as cursor:
                 cursor.execute(query, price_data)
                 conn.commit()
+    
+    def upsert_news_article(self, ticker: str, article_data: Dict[str, Any]) -> bool:
+        """
+        Inserts a news article into the database if its URL doesn't already exist.
+        Returns True if a new row was inserted, False otherwise.
+        """
+        query = sql.SQL("""
+            INSERT INTO news_articles (security_id, title, url, published_at, embedding)
+            SELECT s.id, %(title)s, %(link)s, %(published_at)s, %(embedding)s
+            FROM securities s WHERE s.ticker = %(ticker)s
+            ON CONFLICT (url) DO NOTHING;
+        """)
+        
+        article_data['ticker'] = ticker
+
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query, article_data)
+                conn.commit()
+                # cursor.rowcount will be 1 if a row was inserted, 0 otherwise.
+                return cursor.rowcount > 0
