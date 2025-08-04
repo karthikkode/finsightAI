@@ -4,3 +4,8 @@ psycopg2-binary
 yfinance
 numpy
 tqdm
+beautifulsoup4
+lxml
+ollama
+fastapi
+uvicorn[standard]

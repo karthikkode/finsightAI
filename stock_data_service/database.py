@@ -1,18 +1,106 @@
 import psycopg2
-from psycopg2 import OperationalError
+from psycopg2 import pool, sql
+from psycopg2.extras import DictCursor
+from contextlib import contextmanager
+import logging
+from datetime import date
 
-def get_db_connection():
-    """Establishes a connection to the PostgreSQL database."""
-    try:
-        conn = psycopg2.connect(
-            dbname="finsight_db",
-            user="finsight_admin",
-            password="1234",  # WARNING: Use environment variables in production
-            host="localhost",
-            port="5432"
-        )
-        print("✅ Database connection successful")
-        return conn
-    except OperationalError as e:
-        print(f"❌ Could not connect to the database: {e}")
-        return None
+from . import config
+
+class DatabaseManager:
+    """
+    A production-ready class to manage PostgreSQL connections and operations.
+    It uses a connection pool for efficiency.
+    """
+    def __init__(self):
+        """Initializes the connection pool."""
+        try:
+            self.pool = psycopg2.pool.SimpleConnectionPool(
+                minconn=1,
+                maxconn=10,
+                dbname=config.DB_NAME,
+                user=config.DB_USER,
+                password=config.DB_PASSWORD,
+                host=config.DB_HOST,
+                port=config.DB_PORT
+            )
+            logging.info("Database connection pool created successfully.")
+        except psycopg2.OperationalError as e:
+            logging.critical(f"Could not create database connection pool: {e}")
+            raise
+
+    @contextmanager
+    def get_connection(self):
+        """
+        Provides a database connection from the pool using a context manager.
+        Ensures the connection is always returned to the pool.
+        """
+        conn = None
+        try:
+            conn = self.pool.getconn()
+            yield conn
+        finally:
+            if conn:
+                self.pool.putconn(conn)
+
+    def get_all_tickers(self) -> list[str]:
+        """Retrieves all stock tickers from the securities table."""
+        logging.info("Fetching all tickers from the database...")
+        query = "SELECT ticker FROM securities ORDER BY ticker;"
+        with self.get_connection() as conn:
+            with conn.cursor(cursor_factory=DictCursor) as cursor:
+                cursor.execute(query)
+                tickers = [row['ticker'] for row in cursor.fetchall()]
+                logging.info(f"Found {len(tickers)} tickers in the database.")
+                return tickers
+
+    def get_latest_trade_date(self, ticker_symbol: str) -> date | None:
+        """
+        Retrieves the most recent trade date for a given stock from the database.
+        Returns None if no data exists for the ticker.
+        """
+        query = sql.SQL("""
+            SELECT MAX(dp.trade_date)
+            FROM daily_prices dp
+            JOIN securities s ON s.id = dp.security_id
+            WHERE s.ticker = %s;
+        """)
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query, (ticker_symbol,))
+                latest_date = cursor.fetchone()[0]
+                if latest_date:
+                    logging.debug(f"Latest date for {ticker_symbol} in DB is {latest_date}.")
+                else:
+                    logging.debug(f"No existing data found for {ticker_symbol} in DB.")
+                return latest_date
+
+    def upsert_daily_price(self, ticker: str, price_data: dict):
+        """
+        Inserts or updates a single day's price data for a given stock.
+        """
+        query = sql.SQL("""
+            INSERT INTO daily_prices (
+                security_id, trade_date, open_price, high_price, low_price, 
+                close_price, adj_close_price, volume, market_cap, dividends, stock_splits
+            )
+            SELECT 
+                s.id, %(trade_date)s, %(open)s, %(high)s, %(low)s, 
+                %(close)s, %(adj_close)s, %(volume)s, %(market_cap)s, %(dividends)s, %(stock_splits)s
+            FROM securities s WHERE s.ticker = %(ticker)s
+            ON CONFLICT (security_id, trade_date) DO UPDATE SET
+                open_price = EXCLUDED.open_price,
+                high_price = EXCLUDED.high_price,
+                low_price = EXCLUDED.low_price,
+                close_price = EXCLUDED.close_price,
+                adj_close_price = EXCLUDED.adj_close_price,
+                volume = EXCLUDED.volume,
+                market_cap = EXCLUDED.market_cap;
+        """)
+        
+        price_data['ticker'] = ticker
+        
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query, price_data)
+                conn.commit()
