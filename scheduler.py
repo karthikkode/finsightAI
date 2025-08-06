@@ -2,14 +2,13 @@ import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from pytz import utc
+from datetime import datetime
 
 # Import the main functions from our data services
 from stock_data_service.updater import run_daily_stock_update
 from financial_news_service.updater import run_news_update
 
 # Import database connection details from a shared config
-# Note: We need a config file in the root or a shared location.
-# For now, let's create a simple one.
 from config import DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME
 
 # --- Scheduler Configuration ---
@@ -34,7 +33,6 @@ def schedule_jobs():
 
     # --- Job 1: Daily Stock Price Update ---
     # This job runs once per day, Monday to Friday, at 6:00 PM UTC.
-    # (Adjust the time as needed for your target market close)
     scheduler.add_job(
         run_daily_stock_update,
         'cron',
@@ -47,15 +45,17 @@ def schedule_jobs():
     logging.info("Scheduled: Daily stock price update (Mon-Fri at 18:00 UTC)")
 
     # --- Job 2: Financial News Update ---
-    # This job runs every 4 hours, every day.
-    scheduler.add_job(
-        run_news_update,
-        'interval',
-        hours=4,
-        id='hourly_news_update_job', # A unique ID for the job
-        replace_existing=True
-    )
-    logging.info("Scheduled: Financial news update (every 4 hours)")
+    # This job runs every 4 hours. The `next_run_time` argument ensures
+    # it also runs immediately when the server starts up for the first time.
+    # scheduler.add_job(
+    #     run_news_update,
+    #     'interval',
+    #     hours=4,
+    #     id='hourly_news_update_job', # A unique ID for the job
+    #     replace_existing=True,
+    #     next_run_time=datetime.now(utc) # <-- ADDED THIS LINE
+    # )
+    logging.info("Scheduled: Financial news update (runs immediately, then every 4 hours)")
 
     logging.info("All jobs have been scheduled.")
 

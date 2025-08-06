@@ -121,5 +121,43 @@ class DatabaseManager:
             with conn.cursor() as cursor:
                 cursor.execute(query, article_data)
                 conn.commit()
-                # cursor.rowcount will be 1 if a row was inserted, 0 otherwise.
                 return cursor.rowcount > 0
+
+    def upsert_income_statement(self, ticker: str, data: Dict[str, Any]):
+        query = sql.SQL("""
+            INSERT INTO income_statements_quarterly (security_id, report_date, total_revenue, cost_of_revenue, gross_profit, operating_income, operating_expense, net_income, ebit, ebitda, basic_eps)
+            SELECT s.id, %(report_date)s, %(total_revenue)s, %(cost_of_revenue)s, %(gross_profit)s, %(operating_income)s, %(operating_expense)s, %(net_income)s, %(ebit)s, %(ebitda)s, %(basic_eps)s
+            FROM securities s WHERE s.ticker = %(ticker)s
+            ON CONFLICT (security_id, report_date) DO NOTHING;
+        """)
+        data['ticker'] = ticker
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query, data)
+                conn.commit()
+
+    def upsert_balance_sheet(self, ticker: str, data: Dict[str, Any]):
+        query = sql.SQL("""
+            INSERT INTO balance_sheets_quarterly (security_id, report_date, total_assets, current_assets, total_liabilities, current_liabilities, total_debt, net_debt, stockholders_equity)
+            SELECT s.id, %(report_date)s, %(total_assets)s, %(current_assets)s, %(total_liabilities)s, %(current_liabilities)s, %(total_debt)s, %(net_debt)s, %(stockholders_equity)s
+            FROM securities s WHERE s.ticker = %(ticker)s
+            ON CONFLICT (security_id, report_date) DO NOTHING;
+        """)
+        data['ticker'] = ticker
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query, data)
+                conn.commit()
+
+    def upsert_cash_flow(self, ticker: str, data: Dict[str, Any]):
+        query = sql.SQL("""
+            INSERT INTO cash_flows_quarterly (security_id, report_date, operating_cash_flow, investing_cash_flow, financing_cash_flow, free_cash_flow)
+            SELECT s.id, %(report_date)s, %(operating_cash_flow)s, %(investing_cash_flow)s, %(financing_cash_flow)s, %(free_cash_flow)s
+            FROM securities s WHERE s.ticker = %(ticker)s
+            ON CONFLICT (security_id, report_date) DO NOTHING;
+        """)
+        data['ticker'] = ticker
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query, data)
+                conn.commit()
