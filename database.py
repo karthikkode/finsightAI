@@ -45,14 +45,17 @@ class DatabaseManager:
             if conn:
                 self.pool.putconn(conn)
 
-    def get_all_tickers(self) -> list[str]:
-        """Retrieves all stock tickers from the securities table."""
+    def get_all_tickers(self) -> list[dict]:
+        """
+        Retrieves all stock tickers and their long names from the securities table.
+        """
         logging.info("Fetching all tickers from the database...")
-        query = "SELECT ticker FROM securities ORDER BY ticker;"
+        query = "SELECT ticker, long_name FROM securities ORDER BY ticker;"
         with self.get_connection() as conn:
             with conn.cursor(cursor_factory=DictCursor) as cursor:
                 cursor.execute(query)
-                tickers = [row['ticker'] for row in cursor.fetchall()]
+                # Return a list of dictionaries for more context
+                tickers = [{'ticker': row['ticker'], 'long_name': row['long_name']} for row in cursor.fetchall()]
                 logging.info(f"Found {len(tickers)} tickers in the database.")
                 return tickers
 
@@ -155,6 +158,22 @@ class DatabaseManager:
             SELECT s.id, %(report_date)s, %(operating_cash_flow)s, %(investing_cash_flow)s, %(financing_cash_flow)s, %(free_cash_flow)s
             FROM securities s WHERE s.ticker = %(ticker)s
             ON CONFLICT (security_id, report_date) DO NOTHING;
+        """)
+        data['ticker'] = ticker
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query, data)
+                conn.commit()
+
+    def upsert_corporate_announcement(self, ticker: str, data: Dict[str, Any]):
+        """
+        Inserts a corporate announcement into the database if its URL doesn't already exist.
+        """
+        query = sql.SQL("""
+            INSERT INTO corporate_announcements (security_id, title, url, announcement_date, category)
+            SELECT s.id, %(title)s, %(url)s, %(announcement_date)s, %(category)s
+            FROM securities s WHERE s.ticker = %(ticker)s
+            ON CONFLICT (url) DO NOTHING;
         """)
         data['ticker'] = ticker
         with self.get_connection() as conn:
