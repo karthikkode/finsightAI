@@ -192,24 +192,100 @@ class DocumentFetcher:
             logging.error(f"Error fetching credit ratings for {ticker_symbol}: {e}")
             return []
 
+    def fetch_concalls(self, ticker_symbol: str) -> List[Dict[str, Any]]:
+        """
+        Scrapes links for Concall Transcripts or PPTs for a given stock ticker.
+        It prioritizes Transcripts and falls back to PPTs if not available.
+        """
+        logging.info(f"Fetching concalls for {ticker_symbol} from Screener.in...")
+        
+        base_ticker = ticker_symbol.replace('.NS', '')
+        encoded_ticker = quote(base_ticker)
+        screener_url = f"https://www.screener.in/company/{encoded_ticker}/"
+        
+        try:
+            response = requests.get(screener_url, headers=self.headers, timeout=20)
+            response.raise_for_status()
+
+            soup = BeautifulSoup(response.content, 'lxml')
+            
+            documents_section = soup.find('section', id='documents')
+            if not documents_section: return []
+
+            concalls_div = documents_section.find('div', class_='concalls')
+            if not concalls_div:
+                logging.warning(f"Concalls sub-section not found for {ticker_symbol}.")
+                return []
+            
+            link_list = concalls_div.find('ul', class_='list-links')
+            if not link_list: return []
+
+            documents = []
+            list_items = link_list.find_all('li')
+            
+            for item in list_items:
+                date_tag = item.find('div', class_='nowrap')
+                if not date_tag: continue
+                date_str = date_tag.text.strip() # e.g., "Jul 2025"
+
+                # Find the Transcript link first
+                transcript_link = item.find('a', title='Raw Transcript')
+                ppt_link = item.find('a', string='PPT')
+                
+                target_link_tag = None
+                doc_type = None
+
+                if transcript_link:
+                    target_link_tag = transcript_link
+                    doc_type = "Concall Transcript"
+                elif ppt_link:
+                    target_link_tag = ppt_link
+                    doc_type = "Concall PPT"
+                else:
+                    continue # Skip if neither is found
+
+                report_url = urljoin(screener_url, target_link_tag.get('href', ''))
+                
+                parsed_date = pd.to_datetime(date_str, format='%b %Y', errors='coerce')
+                if pd.isna(parsed_date): continue
+                
+                filename = f"{base_ticker}_{doc_type.replace(' ', '_')}_{parsed_date.strftime('%Y%m')}.pdf"
+                local_path = self._download_file(report_url, filename, "concalls", referer_url=screener_url)
+                if not local_path: continue
+
+                document_info = {
+                    'document_type': doc_type,
+                    'source_url': report_url,
+                    'report_date': parsed_date.strftime('%Y-%m-%d'),
+                    'local_path': local_path
+                }
+                documents.append(document_info)
+            
+            logging.info(f"Successfully downloaded {len(documents)} concall documents for {ticker_symbol}.")
+            return documents
+
+        except Exception as e:
+            logging.error(f"Error fetching concalls for {ticker_symbol}: {e}")
+            return []
+
     def _process_document_url(self, url: str, filename: str, subdirectory: str, referer_url: str) -> str | None:
         """
         Dispatcher function that checks if a URL is a PDF or HTML and calls the
         appropriate processing function.
         """
         if url.lower().endswith('.pdf'):
-            return self._download_pdf(url, filename, subdirectory, referer_url)
+            return self._download_file(url, filename, subdirectory, referer_url)
         else:
             return self._extract_text_from_html(url, filename, subdirectory, referer_url)
 
-    def _download_pdf(self, url: str, filename: str, subdirectory: str, referer_url: str) -> str | None:
+    def _download_file(self, url: str, filename: str, subdirectory: str, referer_url: str) -> str | None:
         """Downloads a PDF from a URL to the local download directory."""
         target_dir = os.path.join(self.base_download_dir, subdirectory)
         os.makedirs(target_dir, exist_ok=True)
         local_filepath = os.path.join(target_dir, filename)
         
         try:
-            logging.info(f"Downloading PDF from {url}...")
+            logging.info(f"Downloading File from {url}...")
             download_headers = self.headers.copy()
             download_headers['Referer'] = referer_url
             
@@ -218,10 +294,10 @@ class DocumentFetcher:
                 with open(local_filepath, 'wb') as f:
                     for chunk in r.iter_content(chunk_size=8192):
                         f.write(chunk)
-            logging.info(f"Successfully saved PDF to {local_filepath}")
+            logging.info(f"Successfully saved File to {local_filepath}")
             return local_filepath
         except Exception as e:
-            logging.error(f"Failed to download PDF from {url}: {e}")
+            logging.error(f"Failed to download File from {url}: {e}")
             return None
 
     def _extract_text_from_html(self, url: str, filename: str, subdirectory: str, referer_url: str) -> str | None:
@@ -262,9 +338,9 @@ if __name__ == '__main__':
     sample_ticker = 'RELIANCE.NS'
     fetcher = DocumentFetcher()
     
-    print("\n--- Fetching Credit Ratings ---")
-    ratings = fetcher.fetch_credit_ratings(sample_ticker)
-    if ratings:
-        print("\n--- Processed Credit Ratings ---")
-        for rating in ratings:
-            print(rating)
+    print("\n--- Fetching Concalls ---")
+    concalls = fetcher.fetch_concalls(sample_ticker)
+    if concalls:
+        print("\n--- Downloaded Concalls ---")
+        for doc in concalls:
+            print(doc)

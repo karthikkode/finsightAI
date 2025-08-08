@@ -10,7 +10,7 @@ from . import config
 def run_document_download():
     """
     Main orchestration function for downloading all available documents
-    (Annual Reports, Credit Ratings, etc.) for all stocks.
+    (Annual Reports, Credit Ratings, Concalls, etc.) for all stocks.
     This is a long-running script designed for a full backfill.
     """
     logging.info("🚀 Starting financial documents download process...")
@@ -33,8 +33,8 @@ def run_document_download():
                 # Fetch and download all document types for the current ticker
                 logging.info(f"--- Processing {ticker} ---")
                 # fetcher.fetch_annual_reports(ticker)
-                fetcher.fetch_credit_ratings(ticker)
-                # In the future, we can add fetch_concalls(ticker), etc. here
+                # fetcher.fetch_credit_ratings(ticker)
+                fetcher.fetch_concalls(ticker)
                 
                 # Add a reasonable delay to avoid getting blocked
                 time.sleep(2)
