@@ -5,6 +5,7 @@ from contextlib import contextmanager
 import logging
 from datetime import date
 from typing import Dict, Any
+import hashlib
 
 import config
 
@@ -47,15 +48,14 @@ class DatabaseManager:
 
     def get_all_tickers(self) -> list[dict]:
         """
-        Retrieves all stock tickers and their long names from the securities table.
+        Retrieves all stock tickers, their long names, and IDs from the securities table.
         """
         logging.info("Fetching all tickers from the database...")
-        query = "SELECT ticker, long_name FROM securities ORDER BY ticker;"
+        query = "SELECT id, ticker, long_name FROM securities ORDER BY ticker;"
         with self.get_connection() as conn:
             with conn.cursor(cursor_factory=DictCursor) as cursor:
                 cursor.execute(query)
-                # Return a list of dictionaries for more context
-                tickers = [{'ticker': row['ticker'], 'long_name': row['long_name']} for row in cursor.fetchall()]
+                tickers = [{'id': row['id'], 'ticker': row['ticker'], 'long_name': row['long_name']} for row in cursor.fetchall()]
                 logging.info(f"Found {len(tickers)} tickers in the database.")
                 return tickers
 
@@ -180,3 +180,38 @@ class DatabaseManager:
             with conn.cursor() as cursor:
                 cursor.execute(query, data)
                 conn.commit()
+                
+    def upsert_document_chunk(self, data: Dict[str, Any]):
+        """
+        Inserts a single document chunk into the database.
+        Uses a hash of the chunk text to enforce uniqueness efficiently.
+        """
+        chunk_text = data['chunk_text']
+        chunk_hash = hashlib.md5(chunk_text.encode('utf-8')).hexdigest()
+        data['chunk_hash'] = chunk_hash
+
+        query = sql.SQL("""
+            INSERT INTO document_chunks (security_id, document_type, source_url, report_date, chunk_text, embedding, chunk_hash)
+            VALUES (%(security_id)s, %(document_type)s, %(source_url)s, %(report_date)s, %(chunk_text)s, %(embedding)s, %(chunk_hash)s)
+            ON CONFLICT (security_id, document_type, source_url, chunk_hash) DO NOTHING;
+        """)
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query, data)
+                conn.commit()
+
+    def delete_chunks_for_file(self, source_url: str):
+        """
+        Deletes all document chunks associated with a specific source file URL.
+        This is used for cleanup when a file fails to process completely.
+        """
+        logging.warning(f"Deleting all existing chunks for failed file: {source_url}")
+        query = sql.SQL("DELETE FROM document_chunks WHERE source_url = %s;")
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(query, (source_url,))
+                    conn.commit()
+                    logging.info(f"Successfully deleted {cursor.rowcount} chunks for {source_url}.")
+        except Exception as e:
+            logging.error(f"Failed to delete chunks for {source_url}: {e}")
