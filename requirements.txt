@@ -12,3 +12,4 @@ uvicorn[standard]
 apscheduler
 SQLAlchemy
 pdfplumber
+trafilatura

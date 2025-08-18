@@ -21,12 +21,22 @@ def process_single_file(file_path, db_manager, parser, embedder, ticker_to_id_ma
     try:
         # --- 1. Extract Metadata from Filename ---
         filename = os.path.basename(file_path)
-        parts = os.path.splitext(filename)[0].split('_')
-        if len(parts) < 3:
+        base_name, ext = os.path.splitext(filename)
+        parts = base_name.split('_')
+
+        # --- FIX: More robust logic to handle different filename formats ---
+        doc_type_raw = ""
+        if len(parts) == 2 and parts[1].isdigit() and len(parts[1]) == 4:
+            # Handle Annual Reports like 'RELIANCE_2024.pdf'
+            doc_type_raw = "AR"
+        elif len(parts) >= 3:
+            # Handle other types like 'RELIANCE_CR_crisil_20250730.pdf'
+            doc_type_raw = parts[1]
+        else:
             logging.warning(f"Skipping malformed filename: {filename}")
             return False
 
-        doc_type_raw = parts[1]
+        # --- 2. Smart File Filtering based on Document Type ---
         if doc_type_raw in ["AR", "Concall", "PPT"] and not filename.lower().endswith('.pdf'): return False
         if doc_type_raw == "CR" and not (filename.lower().endswith('.pdf') or filename.lower().endswith('.txt')): return False
         
@@ -35,28 +45,30 @@ def process_single_file(file_path, db_manager, parser, embedder, ticker_to_id_ma
         security_id = ticker_to_id_map.get(ticker)
         if not security_id: return False
 
-        # --- 2. Parse, Chunk, and Embed ---
+        # --- 3. Parse, Chunk, and Embed ---
         raw_text = parser.parse_document(file_path)
         if not raw_text: return False
         
         text_chunks = parser.chunk_text(raw_text)
         if not text_chunks: return False
 
-        # --- 3. Extract document type and date ---
-        date_str = parts[-1]
-        doc_type_parts = parts[1:-1]
+        # --- 4. Extract document type and date ---
         doc_type_map = {"AR": "Annual Report", "CR": "Credit Rating", "Concall": "Concall Transcript", "PPT": "Concall PPT"}
-        doc_type = doc_type_map.get(doc_type_raw, " ".join(doc_type_parts))
+        doc_type = doc_type_map.get(doc_type_raw, "Unknown")
         
         report_date = None
         try:
-            if len(date_str) == 4: report_date = datetime.strptime(f"{date_str}-03-31", '%Y-%m-%d').date()
-            elif len(date_str) == 8: report_date = datetime.strptime(date_str, '%Y%m%d').date()
-            elif len(date_str) == 6: report_date = datetime.strptime(date_str, '%Y%m').date()
+            if doc_type_raw == "AR":
+                date_str = parts[1]
+                report_date = datetime.strptime(f"{date_str}-03-31", '%Y-%m-%d').date()
+            else:
+                date_str = parts[-1] if doc_type_raw != "CR" else parts[3]
+                if len(date_str) == 8: report_date = datetime.strptime(date_str, '%Y%m%d').date()
+                elif len(date_str) == 6: report_date = datetime.strptime(date_str, '%Y%m').date()
         except ValueError:
             logging.warning(f"Could not parse date from filename: {filename}")
 
-        # --- 4. Store Chunks in DB ---
+        # --- 5. Store Chunks in DB ---
         for chunk in text_chunks:
             clean_chunk = chunk.replace('\x00', '')
             embedding = embedder.generate_embedding(clean_chunk)
@@ -104,18 +116,21 @@ def run_document_processing():
 
         ticker_to_id_map = {info['ticker']: info['id'] for info in tickers_info}
         
-        # --- Collect all file paths first ---
-        all_files_to_process = []
-        for subdir, _, files in os.walk(config.SOURCE_DOCUMENTS_DIR):
-            if "quarantine" in subdir: continue # Skip the quarantine directory
-            for filename in files:
-                all_files_to_process.append(os.path.join(subdir, filename))
-        
-        if not all_files_to_process:
-            logging.info("No documents found to process.")
+        # --- MODIFIED: Target only the annual_reports directory ---
+        target_directory = os.path.join(config.SOURCE_DOCUMENTS_DIR, "annual_reports")
+        logging.info(f"Processing documents in target directory: {target_directory}")
+
+        if not os.path.isdir(target_directory):
+            logging.error(f"Directory not found: {target_directory}")
             return
 
-        logging.info(f"Found {len(all_files_to_process)} total documents to process.")
+        all_files_to_process = [os.path.join(target_directory, f) for f in os.listdir(target_directory) if os.path.isfile(os.path.join(target_directory, f))]
+        
+        if not all_files_to_process:
+            logging.info("No documents found in the annual_reports directory.")
+            return
+
+        logging.info(f"Found {len(all_files_to_process)} annual reports to process.")
 
         # --- Use a ThreadPoolExecutor for parallel processing ---
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
@@ -123,7 +138,7 @@ def run_document_processing():
             future_to_file = {executor.submit(process_single_file, file, db_manager, parser, embedder, ticker_to_id_map): file for file in all_files_to_process}
             
             # Use tqdm to create a progress bar
-            for future in tqdm(concurrent.futures.as_completed(future_to_file), total=len(all_files_to_process), desc="Processing Documents"):
+            for future in tqdm(concurrent.futures.as_completed(future_to_file), total=len(all_files_to_process), desc="Processing Annual Reports"):
                 file = future_to_file[future]
                 try:
                     future.result()

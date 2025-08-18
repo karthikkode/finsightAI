@@ -1,16 +1,58 @@
 import logging
 import time
 from tqdm import tqdm
+import concurrent.futures
 
 from database import DatabaseManager
 from .fetcher import NewsFetcher
 from .embedder import EmbeddingGenerator
-from . import config # Initializes logging
+from . import config
 
-def run_news_update():
+def process_ticker_news(ticker_info, db_manager, news_fetcher, embedder):
     """
-    The main orchestration function for the financial news update process.
-    This is the function you will schedule to run periodically.
+    Processes a single ticker: fetches news, generates embeddings, and stores.
+    Designed to be run in a thread.
+    """
+    ticker = ticker_info['ticker']
+    company_name = ticker_info['long_name']
+    
+    # Skip if there's no company name, as the fetcher needs it
+    if not company_name:
+        logging.warning(f"No company name for {ticker}, skipping news fetch.")
+        return 0
+
+    try:
+        # --- FIX: Pass both the ticker and the company name to the fetcher ---
+        articles = news_fetcher.fetch_news_for_ticker(ticker, company_name)
+        if not articles:
+            return 0
+
+        articles_inserted = 0
+        for article in articles:
+            # Generate an embedding from the FULL article content
+            embedding = embedder.generate_embedding(article['content'])
+            if not embedding:
+                logging.warning(f"Skipping article due to embedding failure: {article['title']}")
+                continue
+            
+            article['embedding'] = embedding
+            
+            inserted = db_manager.upsert_news_article(ticker, article)
+            if inserted:
+                articles_inserted += 1
+        
+        if articles_inserted > 0:
+            logging.info(f"Inserted {articles_inserted} new articles for {ticker}.")
+        return articles_inserted
+
+    except Exception as e:
+        logging.error(f"An unexpected error occurred for ticker {ticker}: {e}")
+        return 0
+
+def run_news_update(tickers_to_process):
+    """
+    Main orchestration function for the financial news update process,
+    using a thread pool for parallel processing.
     """
     logging.info("🚀 Starting financial news update process...")
     
@@ -20,49 +62,24 @@ def run_news_update():
         news_fetcher = NewsFetcher()
         embedder = EmbeddingGenerator()
 
-        # 1. Get all tickers from our database
-        tickers = db_manager.get_all_tickers()
-        if not tickers:
-            logging.warning("No tickers found in the database to update news for.")
+        if not tickers_to_process:
+            logging.warning("No tickers provided to update news for.")
             return
 
-        logging.info(f"Found {len(tickers)} tickers to check for news updates.")
+        logging.info(f"Starting to process {len(tickers_to_process)} tickers for news updates.")
         
         total_articles_inserted = 0
-        tickers_failed = 0
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            future_to_ticker = {executor.submit(process_ticker_news, info, db_manager, news_fetcher, embedder): info['ticker'] for info in tickers_to_process}
+            
+            for future in tqdm(concurrent.futures.as_completed(future_to_ticker), total=len(tickers_to_process), desc="Updating News"):
+                try:
+                    result = future.result()
+                    total_articles_inserted += result
+                except Exception as exc:
+                    ticker = future_to_ticker[future]
+                    logging.error(f'{ticker} generated an exception: {exc}')
 
-        # 2. Loop through each ticker, fetch news, generate embeddings, and store
-        for ticker in tqdm(tickers, desc="Updating News"):
-            try:
-                articles = news_fetcher.fetch_news_for_ticker(ticker)
-                if not articles:
-                    continue
-
-                articles_for_this_ticker = 0
-                for article in articles:
-                    # Generate an embedding for the article title
-                    embedding = embedder.generate_embedding(article['title'])
-                    if not embedding:
-                        logging.warning(f"Skipping article due to embedding failure: {article['title']}")
-                        continue
-                    
-                    # Add the embedding to the article dictionary
-                    article['embedding'] = embedding
-                    
-                    # Insert the complete article data into the database
-                    inserted = db_manager.upsert_news_article(ticker, article)
-                    articles_for_this_ticker += 1 if inserted else 0
-                
-                if articles_for_this_ticker > 0:
-                    logging.info(f"Inserted {articles_for_this_ticker} new articles for {ticker}.")
-                    total_articles_inserted += articles_for_this_ticker
-                
-                time.sleep(1) # Be respectful to the news source
-
-            except Exception as e:
-                logging.error(f"An unexpected error occurred for ticker {ticker}: {e}")
-                tickers_failed += 1
-    
     except Exception as e:
         logging.critical(f"A critical error stopped the news update process: {e}")
     
@@ -72,8 +89,12 @@ def run_news_update():
             logging.info("Database connection pool closed.")
         
         logging.info("🎉 Financial news update process finished.")
-        logging.info(f"Summary: Inserted {total_articles_inserted} new articles. {tickers_failed} tickers failed.")
-
+        logging.info(f"Summary: Inserted a total of {total_articles_inserted} new articles.")
 
 if __name__ == '__main__':
-    run_news_update()
+    # --- For Testing: Process only a single stock ---
+    # We create a dictionary to match the format from db_manager.get_all_tickers()
+    sample_tickers = [
+        {'ticker': 'RELIANCE.NS', 'long_name': 'Reliance Industries Limited', 'id': 0} # id is a placeholder for this test
+    ]
+    run_news_update(sample_tickers)

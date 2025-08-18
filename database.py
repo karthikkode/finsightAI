@@ -108,12 +108,13 @@ class DatabaseManager:
     
     def upsert_news_article(self, ticker: str, article_data: Dict[str, Any]) -> bool:
         """
-        Inserts a news article into the database if its URL doesn't already exist.
+        Inserts a news article with its full content and embedding into the database
+        if its URL doesn't already exist.
         Returns True if a new row was inserted, False otherwise.
         """
         query = sql.SQL("""
-            INSERT INTO news_articles (security_id, title, url, published_at, embedding)
-            SELECT s.id, %(title)s, %(link)s, %(published_at)s, %(embedding)s
+            INSERT INTO news_articles (security_id, title, url, published_at, content, embedding)
+            SELECT s.id, %(title)s, %(link)s, %(published_at)s, %(content)s, %(embedding)s
             FROM securities s WHERE s.ticker = %(ticker)s
             ON CONFLICT (url) DO NOTHING;
         """)
